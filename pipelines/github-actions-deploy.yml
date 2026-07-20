@@ -1,0 +1,174 @@
+###############################################################################
+# MSMF Golden Image App - GitHub Actions build & deploy (Octopus)
+#
+# Flow:  build + publish (dotnet) -> package (.nupkg) -> push to Octopus
+#        built-in feed -> create release -> deploy to Development -> promote to
+#        Test -> promote to Production. Uses the first-party OctopusDeploy
+#        actions; deploys block on completion via await-task-action, and
+#        Test/Prod are gated by GitHub Environment "Required reviewers".
+#
+# One-time prerequisites (Settings > Secrets and variables > Actions):
+#   Repository VARIABLES (non-secret):
+#     OCTOPUS_SERVER_URL   e.g. https://your-instance.octopus.app
+#     OCTOPUS_SPACE        e.g. Default
+#   Repository SECRET:
+#     OCTOPUS_API_KEY      API-XXXX...
+#   Environments (Settings > Environments): Development, Test, Production.
+#     Add "Required reviewers" to Test and Production to gate promotion.
+#
+# The Octopus actions read OCTOPUS_URL / OCTOPUS_API_KEY / OCTOPUS_SPACE from the
+# job-level env below, so no server/api_key/space inputs are repeated per step.
+###############################################################################
+
+name: MSMF Golden Image App - Build & Deploy (Octopus)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'pipelines/github-actions-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: msmf-golden-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_PROJECT: src/MSMF.GoldenImage.WebApp/MSMF.GoldenImage.WebApp.csproj
+  PACKAGE_ID: MSMF.GoldenImage.WebApp
+  OCTOPUS_PROJECT: MSMF Golden Image App
+  DEV_ENVIRONMENT: Development
+  TEST_ENVIRONMENT: Test
+  PROD_ENVIRONMENT: Production
+
+jobs:
+  build-and-release:
+    name: Build, package & create release
+    runs-on: ubuntu-latest
+    env:
+      OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+      OCTOPUS_SPACE: ${{ vars.OCTOPUS_SPACE }}
+      OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+    outputs:
+      release_number: ${{ steps.create_release.outputs.release_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute package/release version
+        id: version
+        run: echo "version=1.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore & publish (IIS/ANCM-ready)
+        run: |
+          dotnet restore "$APP_PROJECT"
+          dotnet publish "$APP_PROJECT" \
+            --configuration Release \
+            --no-restore \
+            --output "${{ github.workspace }}/publish"
+
+      - name: Install Octopus CLI
+        uses: OctopusDeploy/install-octopus-cli-action@v3
+        with:
+          version: latest
+
+      - name: Package application (.nupkg)
+        run: |
+          mkdir -p "${{ github.workspace }}/artifacts"
+          octopus package nuget create \
+            --id "$PACKAGE_ID" \
+            --version "${{ steps.version.outputs.version }}" \
+            --base-path "${{ github.workspace }}/publish" \
+            --out-folder "${{ github.workspace }}/artifacts" \
+            --overwrite
+
+      - name: Push package to Octopus built-in feed
+        uses: OctopusDeploy/push-package-action@v3
+        with:
+          packages: ${{ github.workspace }}/artifacts/${{ env.PACKAGE_ID }}.${{ steps.version.outputs.version }}.nupkg
+          overwrite_mode: OverwriteExisting
+
+      - name: Create Octopus release
+        id: create_release
+        uses: OctopusDeploy/create-release-action@v3
+        with:
+          project: ${{ env.OCTOPUS_PROJECT }}
+          package_version: ${{ steps.version.outputs.version }}
+          release_number: ${{ steps.version.outputs.version }}
+          release_notes: 'GitHub Actions run #${{ github.run_number }} - commit ${{ github.sha }}'
+
+  deploy-dev:
+    name: Deploy -> Development
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    environment: Development
+    env:
+      OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+      OCTOPUS_SPACE: ${{ vars.OCTOPUS_SPACE }}
+      OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+    steps:
+      - name: Deploy to Development
+        id: deploy
+        uses: OctopusDeploy/deploy-release-action@v3
+        with:
+          project: ${{ env.OCTOPUS_PROJECT }}
+          release_number: ${{ needs.build-and-release.outputs.release_number }}
+          environments: ${{ env.DEV_ENVIRONMENT }}
+
+      - name: Wait for Development deployment
+        uses: OctopusDeploy/await-task-action@v3
+        with:
+          server_task_id: ${{ fromJSON(steps.deploy.outputs.server_tasks)[0].serverTaskId }}
+
+  deploy-test:
+    name: Promote -> Test
+    needs: [build-and-release, deploy-dev]
+    runs-on: ubuntu-latest
+    environment: Test # add "Required reviewers" to gate this promotion
+    env:
+      OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+      OCTOPUS_SPACE: ${{ vars.OCTOPUS_SPACE }}
+      OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+    steps:
+      - name: Deploy to Test
+        id: deploy
+        uses: OctopusDeploy/deploy-release-action@v3
+        with:
+          project: ${{ env.OCTOPUS_PROJECT }}
+          release_number: ${{ needs.build-and-release.outputs.release_number }}
+          environments: ${{ env.TEST_ENVIRONMENT }}
+
+      - name: Wait for Test deployment
+        uses: OctopusDeploy/await-task-action@v3
+        with:
+          server_task_id: ${{ fromJSON(steps.deploy.outputs.server_tasks)[0].serverTaskId }}
+
+  deploy-prod:
+    name: Promote -> Production
+    needs: [build-and-release, deploy-test]
+    runs-on: ubuntu-latest
+    environment: Production # add "Required reviewers" to gate this promotion
+    env:
+      OCTOPUS_URL: ${{ vars.OCTOPUS_SERVER_URL }}
+      OCTOPUS_SPACE: ${{ vars.OCTOPUS_SPACE }}
+      OCTOPUS_API_KEY: ${{ secrets.OCTOPUS_API_KEY }}
+    steps:
+      - name: Deploy to Production
+        id: deploy
+        uses: OctopusDeploy/deploy-release-action@v3
+        with:
+          project: ${{ env.OCTOPUS_PROJECT }}
+          release_number: ${{ needs.build-and-release.outputs.release_number }}
+          environments: ${{ env.PROD_ENVIRONMENT }}
+
+      - name: Wait for Production deployment
+        uses: OctopusDeploy/await-task-action@v3
+        with:
+          server_task_id: ${{ fromJSON(steps.deploy.outputs.server_tasks)[0].serverTaskId }}
