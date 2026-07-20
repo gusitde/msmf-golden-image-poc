@@ -1,0 +1,99 @@
+###############################################################################
+# terraform.tfvars.example  --  MSMF Golden-Image PoC
+#
+# Copy to terraform.tfvars (git-ignored) and edit. Secrets (octopus_api_key,
+# and any the Compute/Octopus stages add) should come from the environment,
+# e.g.  export TF_VAR_octopus_api_key="API-XXXXXXXXXXXXXXXXXXXXXXX"
+# sourced from Azure Key Vault or a pipeline secret -- do NOT commit real keys.
+#
+# This example covers the SHARED + NETWORK inputs (Stage 2a). The Compute,
+# Octopus/CI-CD, and Policy stage authors append their own keys below their own
+# banners.
+###############################################################################
+
+# ------------------------------------------------------------- shared / auth
+# subscription_id / tenant_id can be omitted here and provided via
+# ARM_SUBSCRIPTION_ID / ARM_TENANT_ID or the logged-in `az` CLI context.
+# subscription_id = "00000000-0000-0000-0000-000000000000"
+# tenant_id       = "00000000-0000-0000-0000-000000000000"
+
+location     = "eastus"
+environment  = "dev"
+owner        = "platform-engineering"
+project_name = "msmf-golden-image"
+
+tags = {
+  cost_center = "CC-1234"
+  ticket      = "MSMF-POC"
+}
+
+# AVM telemetry (tiny, data-free deployment per module). Enable if you want
+# Microsoft to see AVM adoption; off by default for customer subscriptions.
+enable_telemetry = false
+
+# ------------------------------------------------------- Octopus connection
+# Used by providers.tf and by the Octopus/CI-CD stage.
+#
+# STAGE GATE: enable_octopus_stage = false (the default) keeps EVERY
+# octopusdeploy resource/data source out of the plan, so network + compute
+# apply cleanly with NO reachable Octopus server. Flip to true (with a real
+# server URL + TF_VAR_octopus_api_key) to create the Octopus stage.
+enable_octopus_stage = false
+
+octopus_server_url = "https://your-octopus-instance.octopus.app"
+octopus_space_id   = "Spaces-1"
+# octopus_api_key  -> supply via TF_VAR_octopus_api_key, never in this file.
+
+# ---------------------------------------------------------------- network
+# resource_group_name = "rg-msmf-golden-image-dev"   # omit to auto-name
+
+vnet_address_space           = ["10.10.0.0/16"]
+app_subnet_address_prefixes  = ["10.10.1.0/24"]
+mgmt_subnet_address_prefixes = ["10.10.2.0/24"]
+
+# RDP source(s) for the management subnet. MUST be a specific corporate/VPN
+# range -- opening RDP to 0.0.0.0/0 is rejected by variable validation.
+mgmt_rdp_source_cidrs = ["10.0.0.0/8"]
+
+# Source for inbound HTTPS (and opt-in HTTP) to the app subnet. Use "Internet"
+# for a public web app, "VirtualNetwork" if fronted by an internal LB, or an
+# App Gateway subnet CIDR if fronted by Application Gateway / WAF.
+app_http_source_prefix = "Internet"
+
+# Plain HTTP (port 80) is OFF by default (HTTPS-only posture). Opt in only for
+# a certificate-less demo or behind an App Gateway that owns TLS termination.
+app_enable_http = false
+
+# Octopus Server source CIDR(s) for the Listening Tentacle port (10933).
+# Set to the Octopus Server's public IP (self-hosted) or Octopus Cloud static
+# IPs. Only needed for Listening Tentacles; harmless for Polling.
+octopus_server_source_cidrs = ["10.10.0.0/16"]
+
+# =========================================================================== #
+#  COMPUTE stage inputs (appended by the Compute stage author)
+# =========================================================================== #
+# image_source            = "gallery"        # "gallery" | "jfrog"
+# ...
+
+# =========================================================================== #
+#  OCTOPUS / CI-CD stage inputs (appended by the Octopus stage author)
+# =========================================================================== #
+# octopus_project_name    = "MSMF IIS Web App"
+# ...
+
+# =========================================================================== #
+#  POLICY stage inputs (policy.tf -- security-compliance baseline)
+# =========================================================================== #
+# ENFORCED by default ("Default" = deny-effect policies block non-compliant
+# creates). Relax to "DoNotEnforce" only for an audit-only dry run.
+policy_enforcement_mode = "Default"
+
+policy_allowed_locations       = ["eastus", "eastus2"]
+policy_required_tag_keys       = ["project", "env", "owner"]
+policy_deny_public_ip          = true # set false only if compute_enable_public_ip = true is required
+policy_require_disk_encryption = true
+
+# --- Compliance (the security-compliance baseline) ---
+# Recognized initiative the compliance baseline maps to: mcsb | cis | nist | iso27001 | none
+compliance_initiative  = "mcsb"
+policy_enforcement_mode = "Default"
