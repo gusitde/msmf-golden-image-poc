@@ -1,0 +1,73 @@
+###############################################################################
+# MS Migration Factory — Golden Image Prep
+# Stage 2b : COMPUTE — example variable values
+#
+# Copy the relevant lines into your root terraform.tfvars (which also holds the
+# shared + network + policy + octopus values). NEVER commit real secrets —
+# prefer environment variables for anything sensitive, e.g.:
+#   export TF_VAR_compute_admin_password='...'         # or a Key Vault value
+#   export TF_VAR_octopus_api_key='API-XXXXXXXXXXXX'   # shared var (Stage 3)
+#   export TF_VAR_jfrog_access_token='...'             # JFrog path only
+###############################################################################
+
+# ---- Shared variables (declared in the shared variables.tf) -----------------
+# location            = "eastus"
+# environment         = "dev"                 # dev | test | prod
+# owner               = "platform-engineering@global.com"
+# project_name        = "msmf-golden-image"
+# resource_group_name = null                  # null => rg-<project_name>-<environment>
+# enable_telemetry    = false
+# octopus_server_url  = "https://global-msmf.octopus.app"
+# octopus_api_key     = "set via TF_VAR_octopus_api_key"
+
+# ---- Image source toggle ----------------------------------------------------
+image_source = "gallery" # "gallery" | "jfrog"
+
+# ---- Gallery path (image_source = "gallery") --------------------------------
+# MUST match what Stage 1 (Packer) publishes -- these are the shared defaults
+# from packer/variables.pkr.hcl (gallery_name / gallery_resource_group /
+# image_definition_name). Keep the two sides identical.
+compute_compute_gallery_name        = "gal_msmf"
+compute_image_definition_name       = "win2022-iis-octopus"
+compute_image_version               = "latest"
+compute_gallery_resource_group_name = "rg-msmf-gallery"
+compute_image_hyper_v_generation    = "V2"
+
+# ---- JFrog path (image_source = "jfrog") ------------------------------------
+# jfrog_base_url                     = "https://global.jfrog.io/artifactory"
+# jfrog_repo_path                    = "golden-images-vhd/win2022-iis-octopus/osdisk.vhd"
+# jfrog_staging_storage_account_name = "stmsmfvhdstaging"
+# jfrog_staging_resource_group_name  = "rg-msmf-gallery"
+# jfrog_staging_container            = "vhds"
+# jfrog_vhd_blob_name                = "win2022-iis-octopus-osdisk.vhd"
+# compute_jfrog_os_disk_size_gb      = 127
+# jfrog_access_token                 = "set via TF_VAR_jfrog_access_token"
+
+# ---- Placement --------------------------------------------------------------
+# By default the VMs land in the network stage's RG + app subnet (module.vnet).
+# Override only to target an existing/peered network or a different RG:
+# compute_resource_group_name = "rg-msmf-golden-image-dev"
+# compute_subnet_id           = "/subscriptions/.../subnets/snet-app-dev"
+compute_enable_public_ip = false
+
+# ---- Virtual machines -------------------------------------------------------
+compute_vm_name_prefix               = "vm-msmf"
+compute_vm_count                     = 2
+compute_vm_size                      = "Standard_D2s_v5"
+compute_availability_zones           = ["1", "2", "3"]
+compute_admin_username               = "msmfadmin"
+# compute_admin_password             = set via TF_VAR_compute_admin_password (or leave unset to auto-generate)
+compute_os_disk_storage_account_type = "Premium_LRS"
+
+# ---- Octopus Tentacle registration -----------------------------------------
+compute_octopus_space_name        = "Default"
+# When unset, the shared `environment` maps onto the Stage 3 environment names
+# (dev -> "Development", test -> "Test", prod -> "Production") so registration
+# always matches an environment octopus.tf creates. Override only if needed:
+# compute_octopus_environment      = "Development"
+compute_octopus_target_roles      = ["msmf-web", "iis-web-server"]
+compute_octopus_comms_style       = "Polling"       # "Polling" | "Listening"
+compute_octopus_polling_port      = 10943
+compute_octopus_listen_port       = 10933
+# compute_octopus_server_thumbprint = "0123456789ABCDEF0123456789ABCDEF01234567"  # required for Listening
+compute_octopus_machine_policy    = "Default Machine Policy"
