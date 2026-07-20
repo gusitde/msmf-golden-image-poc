@@ -1,0 +1,55 @@
+# =============================================================================
+# Example values for the Stage 1 golden-image build.
+# Copy to windows-golden-image.pkrvars.hcl and edit. Do NOT commit the real file
+# (add *.pkrvars.hcl to .gitignore). Prefer env vars for secrets in CI:
+#   PKR_VAR_client_secret=...   PKR_VAR_octopus_api_key=...
+# =============================================================================
+
+# --- Azure auth (Option A: service principal) --------------------------------
+subscription_id    = "00000000-0000-0000-0000-000000000000"
+tenant_id          = "11111111-1111-1111-1111-111111111111"
+client_id          = "22222222-2222-2222-2222-222222222222"
+# client_secret    -> supply via env: PKR_VAR_client_secret
+use_azure_cli_auth = false
+
+# --- Azure auth (Option B: az CLI) -------------------------------------------
+# use_azure_cli_auth = true          # then leave client_id/client_secret empty
+
+# --- Build placement ---------------------------------------------------------
+location        = "eastus"
+vm_size         = "Standard_D2s_v5"
+os_disk_size_gb = 128
+
+# --- Target Compute Gallery (must already exist) -----------------------------
+# NOTE: gallery_resource_group / gallery_name / image_definition_name are the
+# cross-stage contract with Terraform Stage 2b (compute_gallery_resource_group_name /
+# compute_compute_gallery_name / compute_image_definition_name) - keep them in sync.
+gallery_resource_group = "rg-msmf-gallery"
+gallery_name           = "gal_msmf"
+image_definition_name  = "win2022-iis-octopus"
+image_version          = "1.0.0"
+replication_regions    = ["eastus", "eastus2"]
+
+# --- Tentacle supply-chain pinning (recommended) ------------------------------
+# Pin the MSI to a specific version and give its SHA256 so the build FAILS if
+# the download is tampered with (empty hash = install with a warning only).
+# tentacle_download_url = "https://download.octopusdeploy.com/octopus/Octopus.Tentacle.8.1.1893-x64.msi"
+# tentacle_msi_sha256   = "<sha256-of-that-msi>"
+
+# --- Octopus Deploy ----------------------------------------------------------
+# Keep false for a real golden image; flip to true only for a single-VM demo.
+octopus_register_during_build = false
+octopus_server_url            = "https://your-octopus.octopus.app"
+# octopus_api_key             -> supply via env: PKR_VAR_octopus_api_key
+octopus_space                 = "Default"
+octopus_environment           = "Dev"
+octopus_roles                 = ["web-server", "iis"]
+octopus_comms_style           = "Poll"          # "Listen" or "Poll"
+
+# --- Tags --------------------------------------------------------------------
+env   = "dev"
+owner = "platform-engineering"
+extra_tags = {
+  costcenter = "migration-factory"
+  compliance = "globalcom-baseline"
+}
