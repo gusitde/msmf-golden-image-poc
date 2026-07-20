@@ -1,0 +1,220 @@
+###############################################################################
+# MSMF Golden Image App - Azure DevOps pipeline
+#
+# Flow:  build + publish (dotnet) -> package (.nupkg) -> push to Octopus
+#        built-in feed -> create release -> deploy to Development -> promote to
+#        Test -> promote to Production. Each octopus deploy blocks on completion
+#        (`octopus task wait`), and Test/Prod are gated by environment approvals.
+#
+# One-time prerequisites:
+#   * Pipeline variables (Pipelines > Edit > Variables, or a variable group):
+#       OctopusServerUrl  (plain)   e.g. https://your-instance.octopus.app
+#       OctopusSpace      (plain)   e.g. Default
+#       OctopusApiKey     (SECRET)  API-XXXX...   <- mark "Keep this value secret"
+#                                   or bind from a Key Vault-backed variable group.
+#   * Environments (Pipelines > Environments) named:
+#       MSMF-Development, MSMF-Test, MSMF-Production
+#     Add "Approvals and checks" to MSMF-Test and MSMF-Production so promotion
+#     requires a human approval.
+###############################################################################
+
+name: 1.0.$(Build.BuildId)
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - src/**
+      - pipelines/azure-pipelines.yml
+      - pipelines/steps-install-octopus-cli.yml
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - name: buildConfiguration
+    value: Release
+  - name: dotnetVersion
+    value: '8.0.x'
+  - name: appProject
+    value: 'src/MSMF.GoldenImage.WebApp/MSMF.GoldenImage.WebApp.csproj'
+  - name: packageId
+    value: 'MSMF.GoldenImage.WebApp'
+  # $(Build.BuildId) is constant for the whole run, so this version is identical
+  # in every stage - the release created in Build is the release deployed later.
+  - name: packageVersion
+    value: '1.0.$(Build.BuildId)'
+  - name: octopusProject
+    value: 'MSMF Golden Image App'
+  - name: octopusCliVersion
+    value: '2.21.4'
+  - name: devEnvironment
+    value: 'Development'
+  - name: testEnvironment
+    value: 'Test'
+  - name: prodEnvironment
+    value: 'Production'
+
+stages:
+  # ---------------------------------------------------------------------------
+  - stage: Build
+    displayName: 'Build, package & create release'
+    jobs:
+      - job: build
+        displayName: 'Build & push'
+        steps:
+          - task: UseDotNet@2
+            displayName: 'Install .NET SDK'
+            inputs:
+              packageType: sdk
+              version: '$(dotnetVersion)'
+
+          - script: |
+              set -euo pipefail
+              dotnet restore "$(appProject)"
+              dotnet publish "$(appProject)" \
+                --configuration $(buildConfiguration) \
+                --no-restore \
+                --output "$(Build.ArtifactStagingDirectory)/publish"
+            displayName: 'Restore & publish (IIS/ANCM-ready)'
+
+          - template: steps-install-octopus-cli.yml
+            parameters:
+              version: '$(octopusCliVersion)'
+
+          - script: |
+              set -euo pipefail
+              mkdir -p "$(Build.ArtifactStagingDirectory)/packages"
+              octopus package nuget create \
+                --id "$(packageId)" \
+                --version "$(packageVersion)" \
+                --base-path "$(Build.ArtifactStagingDirectory)/publish" \
+                --out-folder "$(Build.ArtifactStagingDirectory)/packages" \
+                --overwrite
+            displayName: 'Package application (.nupkg)'
+
+          - script: |
+              set -euo pipefail
+              octopus package upload \
+                --package "$(Build.ArtifactStagingDirectory)/packages/$(packageId).$(packageVersion).nupkg" \
+                --overwrite-mode OverwriteExisting \
+                --no-prompt
+            displayName: 'Push package to Octopus built-in feed'
+            env:
+              OCTOPUS_URL: $(OctopusServerUrl)
+              OCTOPUS_API_KEY: $(OctopusApiKey)
+              OCTOPUS_SPACE: $(OctopusSpace)
+
+          - script: |
+              set -euo pipefail
+              octopus release create \
+                --project "$(octopusProject)" \
+                --version "$(packageVersion)" \
+                --package-version "$(packageVersion)" \
+                --release-notes "Azure DevOps build $(Build.BuildNumber) (commit $(Build.SourceVersion))." \
+                --no-prompt
+            displayName: 'Create Octopus release'
+            env:
+              OCTOPUS_URL: $(OctopusServerUrl)
+              OCTOPUS_API_KEY: $(OctopusApiKey)
+              OCTOPUS_SPACE: $(OctopusSpace)
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: 'Deploy -> Development'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: deploy_dev
+        displayName: 'Deploy to Development'
+        environment: 'MSMF-Development'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+                - template: steps-install-octopus-cli.yml
+                  parameters:
+                    version: '$(octopusCliVersion)'
+                - script: |
+                    set -euo pipefail
+                    # Deploy prints the server task id (basic output) which is
+                    # piped into `task wait` so the stage blocks until complete.
+                    octopus release deploy \
+                      --project "$(octopusProject)" \
+                      --version "$(packageVersion)" \
+                      --environment "$(devEnvironment)" \
+                      --no-prompt \
+                      --output-format=basic \
+                      | octopus task wait --progress --timeout 1800
+                  displayName: 'Deploy to Development & wait'
+                  env:
+                    OCTOPUS_URL: $(OctopusServerUrl)
+                    OCTOPUS_API_KEY: $(OctopusApiKey)
+                    OCTOPUS_SPACE: $(OctopusSpace)
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployTest
+    displayName: 'Promote -> Test'
+    dependsOn: DeployDev
+    condition: succeeded()
+    jobs:
+      - deployment: deploy_test
+        displayName: 'Deploy to Test'
+        environment: 'MSMF-Test' # gate promotion with Approvals & checks
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+                - template: steps-install-octopus-cli.yml
+                  parameters:
+                    version: '$(octopusCliVersion)'
+                - script: |
+                    set -euo pipefail
+                    octopus release deploy \
+                      --project "$(octopusProject)" \
+                      --version "$(packageVersion)" \
+                      --environment "$(testEnvironment)" \
+                      --no-prompt \
+                      --output-format=basic \
+                      | octopus task wait --progress --timeout 1800
+                  displayName: 'Deploy to Test & wait'
+                  env:
+                    OCTOPUS_URL: $(OctopusServerUrl)
+                    OCTOPUS_API_KEY: $(OctopusApiKey)
+                    OCTOPUS_SPACE: $(OctopusSpace)
+
+  # ---------------------------------------------------------------------------
+  - stage: DeployProd
+    displayName: 'Promote -> Production'
+    dependsOn: DeployTest
+    condition: succeeded()
+    jobs:
+      - deployment: deploy_prod
+        displayName: 'Deploy to Production'
+        environment: 'MSMF-Production' # gate promotion with Approvals & checks
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: none
+                - template: steps-install-octopus-cli.yml
+                  parameters:
+                    version: '$(octopusCliVersion)'
+                - script: |
+                    set -euo pipefail
+                    octopus release deploy \
+                      --project "$(octopusProject)" \
+                      --version "$(packageVersion)" \
+                      --environment "$(prodEnvironment)" \
+                      --no-prompt \
+                      --output-format=basic \
+                      | octopus task wait --progress --timeout 1800
+                  displayName: 'Deploy to Production & wait'
+                  env:
+                    OCTOPUS_URL: $(OctopusServerUrl)
+                    OCTOPUS_API_KEY: $(OctopusApiKey)
+                    OCTOPUS_SPACE: $(OctopusSpace)
