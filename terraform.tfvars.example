@@ -1,0 +1,28 @@
+###############################################################################
+# MS Migration Factory - Golden Image Prep :: terraform.tfvars.example (POINTER)
+#
+# THE REAL, CANONICAL EXAMPLE FILES LIVE NEXT TO THE CODE THEY CONFIGURE:
+#
+#   terraform/terraform.tfvars.example          <- shared + network + policy
+#                                                  (incl. enable_octopus_stage)
+#   terraform/terraform.tfvars.compute.example  <- Stage 2b compute_* / jfrog_*
+#   terraform/terraform.tfvars.octopus.example  <- Stage 3 octopus_*
+#
+#   packer/windows-golden-image.pkrvars.hcl.example  <- Stage 1 (Packer)
+#
+# HOW TO USE
+#   cd terraform
+#   cp terraform.tfvars.example terraform.tfvars      # terraform.tfvars is git-ignored
+#   # then append the compute/octopus values you need from the other two
+#   # example files into the same terraform.tfvars (single root module).
+#
+# This top-level file is intentionally just a pointer so the variable names
+# can never drift from the real module again. It declares NO values.
+#
+# SECRETS - never put these in ANY tfvars file. Supply via environment
+# variables sourced from Azure Key Vault / a CI secret store, e.g.:
+#   export TF_VAR_octopus_api_key=$(az keyvault secret show \
+#            --vault-name kv-msmf-secrets --name octopus-api-key --query value -o tsv)
+#   export TF_VAR_compute_admin_password='...'   # or leave unset to auto-generate
+#   export TF_VAR_jfrog_access_token='...'       # JFrog image path only
+###############################################################################
