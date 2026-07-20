@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Sample ASP.NET Core web app deployed to IIS on the golden-image VMs.
+    `dotnet publish` emits a framework-dependent build INCLUDING web.config with
+    the ASP.NET Core Module (ANCM) handler, so Octopus can host it under IIS.
+
+    Golden-image requirement (Stage 1): the image must have the ASP.NET Core
+    Hosting Bundle installed in addition to Install-WindowsFeature Web-Server,
+    so IIS can load ANCM. Version is overridden by CI at pack time
+    (octopus package nuget create --version).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Msmf.GoldenImage.WebApp</RootNamespace>
+    <AssemblyName>MSMF.GoldenImage.WebApp</AssemblyName>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+</Project>
