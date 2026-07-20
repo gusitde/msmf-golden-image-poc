@@ -1,0 +1,21 @@
+# -----------------------------------------------------------------------------
+# Reusable steps template: install the modern Octopus CLI (`octopus`) on a
+# Linux agent by extracting the official release tarball onto PATH. Used by
+# azure-pipelines.yml so every stage shares one install definition.
+# -----------------------------------------------------------------------------
+parameters:
+  - name: version
+    type: string
+    default: '2.21.4' # pinned; bump deliberately
+
+steps:
+  - script: |
+      set -euo pipefail
+      url="https://github.com/OctopusDeploy/cli/releases/download/v${{ parameters.version }}/octopus_${{ parameters.version }}_linux_amd64.tar.gz"
+      echo "Downloading Octopus CLI ${{ parameters.version }} from $url"
+      curl -sSfL "$url" -o "$(Agent.TempDirectory)/octopus.tar.gz"
+      mkdir -p "$(Agent.TempDirectory)/octopus-cli"
+      tar -xzf "$(Agent.TempDirectory)/octopus.tar.gz" -C "$(Agent.TempDirectory)/octopus-cli" octopus
+      echo "##vso[task.prependpath]$(Agent.TempDirectory)/octopus-cli"
+      "$(Agent.TempDirectory)/octopus-cli/octopus" version
+    displayName: 'Install Octopus CLI ${{ parameters.version }}'
