@@ -1,0 +1,45 @@
+# ---------------------------------------------------------------------------
+# Stage 3 (Octopus) values - merge into the shared terraform.tfvars(.example).
+#
+# STAGE GATE: none of the resources below are created (and no Octopus server
+# is ever contacted) until the SHARED flag is flipped in terraform.tfvars:
+#   enable_octopus_stage = true
+#
+# The Octopus CONNECTION values live in the SHARED variables/tfvars (declared by
+# the Network stage): octopus_server_url, octopus_api_key, octopus_space_id.
+# Set those there. NEVER commit a real API key - prefer:
+#   export TF_VAR_octopus_api_key="API-XXXX..."   (or a Key Vault-backed secret)
+# ---------------------------------------------------------------------------
+
+octopus_project_name       = "MSMF Golden Image App"
+octopus_project_group_name = "MS Migration Factory"
+octopus_lifecycle_name     = "MSMF Dev-Test-Prod"
+octopus_package_id         = "MSMF.GoldenImage.WebApp"
+
+# Must be a subset of Stage 2b var.compute_octopus_target_roles
+# (default ["msmf-web","iis-web-server"]).
+octopus_target_roles = ["iis-web-server"]
+
+octopus_iis_website_name  = "MSMFGoldenImageApp"
+octopus_iis_app_pool_name = "MSMFGoldenImageApp"
+octopus_iis_binding_port  = "80"
+
+# OPTIONAL - explicit target registration. Leave empty (default) to use Stage 2b
+# Tentacle self-registration (recommended for golden images).
+# octopus_deployment_targets = [
+#   {
+#     name         = "vm-msmf-01"
+#     comms_style  = "Polling"                    # matches Stage 2b default
+#     tentacle_url = "poll://a1b2c3d4e5f6g7h8/"   # polling subscription URL
+#     thumbprint   = "A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"
+#     environment  = "Development"
+#     roles        = ["iis-web-server"]
+#   },
+#   {
+#     name         = "vm-msmf-02"
+#     comms_style  = "Listening"
+#     tentacle_url = "https://10.10.1.11:10933/"
+#     thumbprint   = "1234567890ABCDEF1234567890ABCDEF12345678"
+#     environment  = "Test"
+#   },
+# ]
